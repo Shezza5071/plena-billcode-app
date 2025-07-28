@@ -7,4 +7,5 @@ dependencies:
   - streamlit
   - pandas
   - openpyxl
+  - xlsxwriter  # ✅ Required to write .xlsx files
   - snowflake-snowpark-python
