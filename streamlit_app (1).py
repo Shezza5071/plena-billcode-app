@@ -5,7 +5,7 @@ from io import BytesIO
 st.set_page_config(page_title="Plena Billcode Processor", layout="wide")
 st.title("📋 Plena Billcode Processor")
 
-# Sidebar for uploads
+# Sidebar upload
 st.sidebar.header("Upload Files")
 raw_file = st.sidebar.file_uploader("PlenaBillcodesDIT.xlsx", type=["xlsx"])
 racf_ref_file = st.sidebar.file_uploader("Reference Table - RACF with SF.xlsx", type=["xlsx"])
@@ -15,7 +15,6 @@ comm_ref_file = st.sidebar.file_uploader("Reference Table - COMM.xlsx", type=["x
 def clean_trim(text):
     return str(text).strip().replace("\n", "").replace("\r", "")
 
-# App logic
 if raw_file:
     try:
         raw_df = pd.read_excel(raw_file, sheet_name="BillCodeRates", dtype=str)
@@ -58,42 +57,44 @@ if raw_file:
         df_comm = pd.DataFrame(comm_dict.values())
         df_others = pd.DataFrame(others_dict.values())
 
-        # Apply CPI rate from reference tables
+        # Match & apply new rates
         if comm_ref_file:
             ref_comm = pd.read_excel(comm_ref_file, dtype=str)
-            ref_comm.columns = [str(c).strip().lower() for c in ref_comm.columns]
+            ref_comm.columns = [c.strip().lower() for c in ref_comm.columns]
 
-            def match_and_apply_comm_rate(row):
+            def replace_comm_rate(row):
                 code = clean_trim(row["BillCode*"]).lower()
                 match = ref_comm[ref_comm.iloc[:, 0].str.strip().str.lower() == code]
-                if not match.empty and pd.notnull(row["Rate*"]):
+                if not match.empty:
                     try:
-                        return round(float(row["Rate*"]) * float(match.iloc[0, 1]), 2)
+                        return float(match.iloc[0, 1])
                     except:
                         return row["Rate*"]
                 return row["Rate*"]
 
-            df_comm["Rate*"] = df_comm.apply(match_and_apply_comm_rate, axis=1)
+            df_comm["Rate*"] = df_comm.apply(replace_comm_rate, axis=1)
 
         if racf_ref_file:
             ref_racf = pd.read_excel(racf_ref_file, dtype=str)
-            ref_racf.columns = [str(c).strip().lower() for c in ref_racf.columns]
+            ref_racf.columns = [c.strip().lower() for c in ref_racf.columns]
 
-            def match_and_apply_racf_rate(row):
+            def apply_racf_cpi(row):
                 code = clean_trim(row["BillCode*"]).lower()
                 match = ref_racf[ref_racf["alayacare funder code"].str.strip().str.lower() == code]
                 if not match.empty and pd.notnull(row["Rate*"]):
                     try:
-                        return round(float(row["Rate*"]) * float(match["cpi rate"].values[0]), 2)
+                        cpi = float(match["cpi rate"].values[0])
+                        return round(float(row["Rate*"]) * cpi, 2)
                     except:
                         return row["Rate*"]
                 return row["Rate*"]
 
-            df_racf["Rate*"] = df_racf.apply(match_and_apply_racf_rate, axis=1)
+            df_racf["Rate*"] = df_racf.apply(apply_racf_cpi, axis=1)
 
-        # Combine all into single sheet
+        # Combine all
         combined_df = pd.concat([df_racf, df_comm, df_others], ignore_index=True)
 
+        # Export
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             combined_df.to_excel(writer, index=False, sheet_name="All Rates")
