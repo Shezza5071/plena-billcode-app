@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -6,26 +5,17 @@ from io import BytesIO
 st.set_page_config(page_title="Plena Billcode Processor", layout="wide")
 st.title("📋 Plena Billcode Processor")
 
-# Step 1: Upload required files
+# Sidebar for uploads
 st.sidebar.header("Upload Files")
 raw_file = st.sidebar.file_uploader("PlenaBillcodesDIT.xlsx", type=["xlsx"])
 racf_ref_file = st.sidebar.file_uploader("Reference Table - RACF with SF.xlsx", type=["xlsx"])
 comm_ref_file = st.sidebar.file_uploader("Reference Table - COMM.xlsx", type=["xlsx"])
 
-# Utility to clean and trim text
+# Utility
 def clean_trim(text):
     return str(text).strip().replace("\n", "").replace("\r", "")
 
-# Function to get column index safely
-def get_col_index(header_row, search_terms):
-    for idx, col in enumerate(header_row):
-        col_clean = col.strip().lower()
-        for term in search_terms:
-            if term in col_clean:
-                return idx
-    return -1
-
-# Step 2: Process the uploaded raw file
+# App logic
 if raw_file:
     try:
         raw_df = pd.read_excel(raw_file, sheet_name="BillCodeRates", dtype=str)
@@ -33,7 +23,6 @@ if raw_file:
         st.success("✅ Raw file loaded successfully.")
         st.dataframe(raw_df.head())
 
-        # Prepare dictionaries
         racf_dict, comm_dict, others_dict = {}, {}, {}
         skipped = 0
 
@@ -65,34 +54,49 @@ if raw_file:
         st.write(f"✅ OTHERS entries: {len(others_dict)}")
         st.write(f"⚠️ Skipped rows with invalid date: {skipped}")
 
-        # Convert dictionaries to dataframes
         df_racf = pd.DataFrame(racf_dict.values())
         df_comm = pd.DataFrame(comm_dict.values())
         df_others = pd.DataFrame(others_dict.values())
 
-        # Step 3: Match RACF and COMM against Reference Tables if uploaded
-        if racf_ref_file:
-            ref_racf = pd.read_excel(racf_ref_file, dtype=str)
-            ref_racf.columns = [str(c).strip() for c in ref_racf.columns]
-            df_racf["Matched Salesforce Code"] = df_racf["FunderCode*"].apply(
-                lambda x: ref_racf.loc[ref_racf.iloc[:, 1].str.strip() == clean_trim(x), ref_racf.columns[0]].values[0]
-                if any(ref_racf.iloc[:, 1].str.strip() == clean_trim(x)) else "Not Found"
-            )
-
+        # Apply CPI rate from reference tables
         if comm_ref_file:
             ref_comm = pd.read_excel(comm_ref_file, dtype=str)
-            ref_comm.columns = [str(c).strip() for c in ref_comm.columns]
-            df_comm["Matched Rate"] = df_comm["BillCode*"].apply(
-                lambda x: ref_comm.loc[ref_comm.iloc[:, 0].str.strip() == clean_trim(x), ref_comm.columns[1]].values[0]
-                if any(ref_comm.iloc[:, 0].str.strip() == clean_trim(x)) else "No Match"
-            )
+            ref_comm.columns = [str(c).strip().lower() for c in ref_comm.columns]
 
-        # Step 4: Export combined file
+            def match_and_apply_comm_rate(row):
+                code = clean_trim(row["BillCode*"]).lower()
+                match = ref_comm[ref_comm.iloc[:, 0].str.strip().str.lower() == code]
+                if not match.empty and pd.notnull(row["Rate*"]):
+                    try:
+                        return round(float(row["Rate*"]) * float(match.iloc[0, 1]), 2)
+                    except:
+                        return row["Rate*"]
+                return row["Rate*"]
+
+            df_comm["Rate*"] = df_comm.apply(match_and_apply_comm_rate, axis=1)
+
+        if racf_ref_file:
+            ref_racf = pd.read_excel(racf_ref_file, dtype=str)
+            ref_racf.columns = [str(c).strip().lower() for c in ref_racf.columns]
+
+            def match_and_apply_racf_rate(row):
+                code = clean_trim(row["BillCode*"]).lower()
+                match = ref_racf[ref_racf["alayacare funder code"].str.strip().str.lower() == code]
+                if not match.empty and pd.notnull(row["Rate*"]):
+                    try:
+                        return round(float(row["Rate*"]) * float(match["cpi rate"].values[0]), 2)
+                    except:
+                        return row["Rate*"]
+                return row["Rate*"]
+
+            df_racf["Rate*"] = df_racf.apply(match_and_apply_racf_rate, axis=1)
+
+        # Combine all into single sheet
+        combined_df = pd.concat([df_racf, df_comm, df_others], ignore_index=True)
+
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df_racf.to_excel(writer, index=False, sheet_name="RACF")
-            df_comm.to_excel(writer, index=False, sheet_name="COMM")
-            df_others.to_excel(writer, index=False, sheet_name="OTHERS")
+            combined_df.to_excel(writer, index=False, sheet_name="All Rates")
             if racf_ref_file:
                 ref_racf.to_excel(writer, index=False, sheet_name="Reference Table - RACF with SF")
             if comm_ref_file:
