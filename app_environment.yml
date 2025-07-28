@@ -1,0 +1,10 @@
+name: app_environment
+channels:
+  - snowflake
+  - conda-forge
+dependencies:
+  - python=3.11.*
+  - streamlit
+  - pandas
+  - openpyxl
+  - snowflake-snowpark-python
